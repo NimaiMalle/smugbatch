@@ -1,0 +1,25 @@
+event: "2026-Spring-Recital"
+parent_folder: "/Dance/Studio/2026-Recital"
+date_start: "05/10/2026"
+date_stop: "05/10/2026"
+common_keywords:
+  - "recital"
+privacy: "Unlisted"         # Public, Unlisted, or Private
+use_unlisted: true          # include unlisted galleries in smart rule search
+match: "All"                # "All" or "Any" — how keywords are combined
+
+gallery_settings:           # optional — any SmugMug API album fields
+  SecurityType: "Password"
+  Password: "changeme"
+  AllowDownloads: true
+  Share: false
+  Comments: false
+  ProofDays: 7
+  Filenames: true
+  Slideshow: false
+  Geography: false
+
+galleries:
+  - "Jane Doe"
+  - "John Smith"
+  - "Group A"

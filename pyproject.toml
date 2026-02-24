@@ -1,0 +1,18 @@
+[project]
+name = "smugbatch"
+version = "0.1.0"
+description = "CLI tool for batch SmugMug gallery + smart rules creation"
+requires-python = ">=3.10"
+dependencies = [
+    "click",
+    "requests",
+    "requests-oauthlib",
+    "pyyaml",
+]
+
+[project.scripts]
+smugbatch = "smugbatch.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

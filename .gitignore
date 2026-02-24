@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Batch files (may contain passwords and personal data)
+*.yaml
+!example-batch.yaml
+
+# Secrets
+.env
+*.pem
+
+# OS
+.DS_Store
+
+# IDE / tools
+.claude/
