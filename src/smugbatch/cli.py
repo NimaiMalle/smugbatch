@@ -8,7 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .api import (create_gallery, delete_album_image, find_existing_gallery,
                   get_album_from_node, get_album_images, patch_album,
-                  resolve_folder, resolve_gallery_url, _get_oauth_session)
+                  resolve_folder, resolve_gallery_url, sort_album_images,
+                  _get_oauth_session)
 from .auth import check_auth, run_oauth_flow
 from .config import load_config
 from .smartrules import apply_smart_rules, build_recipe, get_numeric_album_id, has_rules
@@ -156,10 +157,11 @@ def dupes(gallery, delete, keep_latest, force, parallel):
     GALLERY can be a SmugMug URL (e.g. https://...com/.../n-LgKGwb) or a bare AlbumKey.
     """
     config = load_config()
+    nickname = config["user"]["nickname"]
     session = _get_oauth_session(config)
 
     click.echo("Resolving gallery...")
-    album_key = resolve_gallery_url(session, gallery)
+    album_key = resolve_gallery_url(session, gallery, nickname=nickname)
     click.echo(f"Album: {album_key}")
 
     click.echo("Fetching images...", nl=False)
@@ -272,3 +274,69 @@ def dupes(gallery, delete, keep_latest, force, parallel):
                 click.echo(f"  [{deleted + errors}/{len(to_delete)}] FAILED {img['ImageKey']} ({img['FileName']}): {e}")
 
     click.echo(f"\nDeleted {deleted} images ({errors} errors). {len(images) - deleted} remain.")
+
+
+@cli.command()
+@click.argument("gallery")
+@click.option("--by", "sort_by", type=click.Choice(["day"]), required=True,
+              help="Sort strategy: 'day' = newest day first, chronological within each day.")
+def sort(gallery, sort_by):
+    """Sort images in a gallery.
+
+    GALLERY can be a SmugMug URL (e.g. https://...com/.../n-LgKGwb) or a bare AlbumKey.
+    """
+    config = load_config()
+    nickname = config["user"]["nickname"]
+    session = _get_oauth_session(config)
+
+    click.echo("Resolving gallery...")
+    album_key = resolve_gallery_url(session, gallery, nickname=nickname)
+    click.echo(f"Album: {album_key}")
+
+    click.echo("Fetching images...", nl=False)
+    images = get_album_images(session, album_key)
+    click.echo(f" {len(images)} found.")
+
+    if len(images) < 2:
+        click.echo("Nothing to sort.")
+        return
+
+    # Build desired order: days descending, chronological within each day
+    by_day = defaultdict(list)
+    for img in images:
+        by_day[img["DateTimeOriginal"][:10]].append(img)
+
+    desired_order = []
+    for day in sorted(by_day.keys(), reverse=True):
+        desired_order.extend(sorted(by_day[day], key=lambda x: x["DateTimeOriginal"]))
+
+    # Check if already sorted
+    current_keys = [img["ImageKey"] for img in images]
+    desired_keys = [img["ImageKey"] for img in desired_order]
+
+    if current_keys == desired_keys:
+        click.echo("Already in order, nothing to do.")
+        return
+
+    # Show the day breakdown
+    days = sorted(by_day.keys(), reverse=True)
+    click.echo(f"\nSorting {len(images)} images across {len(days)} days:")
+    for day in days:
+        click.echo(f"  {day}: {len(by_day[day])} images")
+
+    # Ensure SortMethod is Position
+    album_data = session.get(f"https://api.smugmug.com/api/v2/album/{album_key}",
+                             headers={"Accept": "application/json"}).json()
+    album = album_data["Response"]["Album"]
+    if album.get("SortMethod") != "Position":
+        click.echo(f"\nChanging sort method from '{album.get('SortMethod')}' to 'Position'...")
+        patch_album(session, album_key, {"SortMethod": "Position"})
+
+    # Sort: place all images after the first in desired order
+    click.echo("Applying sort order...", nl=False)
+    first_uri = desired_order[0]["Uri"]
+    rest_uris = [img["Uri"] for img in desired_order[1:]]
+    sort_album_images(session, album_key, rest_uris, first_uri)
+    click.echo(" done.")
+
+    click.echo(f"\nSorted! Newest day ({days[0]}) first, oldest day ({days[-1]}) last.")

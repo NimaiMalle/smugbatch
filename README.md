@@ -1,6 +1,6 @@
 # SmugBatch
 
-A command-line tool that batch-creates [SmugMug](https://www.smugmug.com/) galleries with [smart rules](https://www.smugmug.com/help/smart-rules) (keyword and date filters).
+A command-line tool for managing [SmugMug](https://www.smugmug.com/) galleries: batch-create galleries with [smart rules](https://www.smugmug.com/help/smart-rules), find and remove duplicate images, and custom-sort photos.
 
 ## What does this do?
 
@@ -161,7 +161,47 @@ smugbatch auth --check    # Verify credentials
 smugbatch batch FILE      # Create galleries from batch file
 smugbatch batch FILE --limit N        # Only process first N galleries
 smugbatch batch FILE --force-settings # Re-apply settings even if unchanged
+smugbatch dupes GALLERY              # Find duplicate images (dry run)
+smugbatch dupes GALLERY --delete     # Remove duplicates (keep earliest upload)
+smugbatch sort GALLERY --by day      # Sort: newest day first, chronological within each day
 ```
+
+`GALLERY` can be a SmugMug URL (e.g. `https://example.com/Photos/Gallery` or `https://example.com/.../n-AbCdEf`) or a bare AlbumKey.
+
+### Duplicates
+
+Detects duplicate images by filename and compares their `ArchivedMD5` hash to confirm they're identical.
+
+```bash
+# Dry run - see what would be removed
+uv run smugbatch dupes https://example.com/Photos/My-Gallery
+
+# Delete identical duplicates (keeps earliest upload)
+uv run smugbatch dupes https://example.com/Photos/My-Gallery --delete
+
+# Keep the latest upload instead
+uv run smugbatch dupes https://example.com/Photos/My-Gallery --delete --keep-latest
+
+# Also delete same-name different-content duplicates
+uv run smugbatch dupes https://example.com/Photos/My-Gallery --delete --force
+
+# Control parallelism (default: 4 concurrent deletes)
+uv run smugbatch dupes https://example.com/Photos/My-Gallery --delete --parallel 8
+```
+
+Same-name files with different content are reported but not deleted unless `--force` is used.
+
+### Sorting
+
+SmugMug only offers single-field sort options (by date taken, filename, etc.). The `sort` command enables custom sort orders that aren't possible through the UI.
+
+```bash
+uv run smugbatch sort https://example.com/Photos/My-Gallery --by day
+```
+
+**`--by day`**: Newest day first, but chronological within each day. Great for galleries you add to over the course of a season — the latest shoot appears at the top, but photos within each shoot are in the order they were taken.
+
+This sets the gallery to manual sort order (`SortMethod: Position`) and arranges images via the API. It's safe to re-run after uploading new photos — it detects if the gallery is already sorted and skips the API call if nothing changed.
 
 ## How it works
 

@@ -141,18 +141,30 @@ def patch_album(session: OAuth1Session, album_key: str, settings: dict) -> dict:
     return resp.json()["Response"]["Album"]
 
 
-def resolve_gallery_url(session: OAuth1Session, identifier: str) -> str:
+def resolve_gallery_url(session: OAuth1Session, identifier: str, nickname: str = None) -> str:
     """Resolve a SmugMug gallery URL or bare album key to an AlbumKey.
 
     Accepts:
-      - Full URL like https://www.photosbynimai.com/.../n-LgKGwb
-      - Bare album key like FjvCpr
+      - URL with node key: https://...com/.../n-LgKGwb
+      - URL with path:     https://...com/School/Dance/2025-Star-Steppers
+      - Bare album key:    FjvCpr
     """
+    # URL with node key (e.g. /n-LgKGwb)
     match = re.search(r"/n-([A-Za-z0-9]+)", identifier)
     if match:
         node_key = match.group(1)
         album = get_album_from_node(session, f"/api/v2/node/{node_key}")
         return album["AlbumKey"]
+
+    # URL with path (contains :// or /)
+    if "://" in identifier:
+        from urllib.parse import urlparse
+        path = urlparse(identifier).path.strip("/")
+        if path and nickname:
+            node_uri = resolve_folder(session, nickname, path)
+            album = get_album_from_node(session, node_uri)
+            return album["AlbumKey"]
+
     # Treat as bare album key
     return identifier
 
@@ -179,6 +191,28 @@ def delete_album_image(session: OAuth1Session, album_key: str, image_key: str) -
     url = f"{API_BASE}/api/v2/album/{album_key}/image/{image_key}"
     while True:
         resp = session.delete(url, headers={"Accept": "application/json"})
+        if not _handle_rate_limit(resp):
+            break
+    resp.raise_for_status()
+
+
+def sort_album_images(session: OAuth1Session, album_key: str,
+                      move_uris: list[str], target_uri: str,
+                      location: str = "After") -> None:
+    """Reorder images in a manually-sorted album.
+
+    Moves all images in move_uris to Before/After the target_uri image.
+    """
+    url = f"{API_BASE}/api/v2/album/{album_key}!sortimages"
+    while True:
+        resp = session.post(url, json={
+            "MoveUris": ",".join(move_uris),
+            "MoveLocation": location,
+            "Uri": target_uri,
+        }, headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        })
         if not _handle_rate_limit(resp):
             break
     resp.raise_for_status()
