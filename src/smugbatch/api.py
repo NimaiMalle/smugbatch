@@ -1,5 +1,6 @@
 """SmugMug API v2 client — folder resolution & gallery creation."""
 
+import re
 import time
 
 import click
@@ -138,3 +139,46 @@ def patch_album(session: OAuth1Session, album_key: str, settings: dict) -> dict:
             break
     resp.raise_for_status()
     return resp.json()["Response"]["Album"]
+
+
+def resolve_gallery_url(session: OAuth1Session, identifier: str) -> str:
+    """Resolve a SmugMug gallery URL or bare album key to an AlbumKey.
+
+    Accepts:
+      - Full URL like https://www.photosbynimai.com/.../n-LgKGwb
+      - Bare album key like FjvCpr
+    """
+    match = re.search(r"/n-([A-Za-z0-9]+)", identifier)
+    if match:
+        node_key = match.group(1)
+        album = get_album_from_node(session, f"/api/v2/node/{node_key}")
+        return album["AlbumKey"]
+    # Treat as bare album key
+    return identifier
+
+
+def get_album_images(session: OAuth1Session, album_key: str) -> list[dict]:
+    """Fetch all images in an album (paginated)."""
+    all_images = []
+    start = 1
+    while True:
+        data = _api_get(session, f"/api/v2/album/{album_key}!images?count=100&start={start}")
+        images = data["Response"].get("AlbumImage", [])
+        if not images:
+            break
+        all_images.extend(images)
+        total = data["Response"].get("Pages", {}).get("Total", 0)
+        if start + 100 > total:
+            break
+        start += 100
+    return all_images
+
+
+def delete_album_image(session: OAuth1Session, album_key: str, image_key: str) -> None:
+    """Delete an image from an album."""
+    url = f"{API_BASE}/api/v2/album/{album_key}/image/{image_key}"
+    while True:
+        resp = session.delete(url, headers={"Accept": "application/json"})
+        if not _handle_rate_limit(resp):
+            break
+    resp.raise_for_status()

@@ -3,7 +3,12 @@
 import click
 import yaml
 
-from .api import create_gallery, find_existing_gallery, get_album_from_node, patch_album, resolve_folder, _get_oauth_session
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from .api import (create_gallery, delete_album_image, find_existing_gallery,
+                  get_album_from_node, get_album_images, patch_album,
+                  resolve_folder, resolve_gallery_url, _get_oauth_session)
 from .auth import check_auth, run_oauth_flow
 from .config import load_config
 from .smartrules import apply_smart_rules, build_recipe, get_numeric_album_id, has_rules
@@ -137,3 +142,133 @@ def batch(batch_file, limit, force_settings):
             updated += 1
 
     click.echo(f"\nDone! Created {created}, updated {updated}, skipped {skipped} (of {total}).")
+
+
+@cli.command()
+@click.argument("gallery")
+@click.option("--delete", is_flag=True, help="Delete duplicates (default: dry run).")
+@click.option("--keep-latest", is_flag=True, help="Keep the latest upload instead of earliest.")
+@click.option("--force", is_flag=True, help="Also delete same-name different-content duplicates.")
+@click.option("--parallel", type=int, default=4, show_default=True, help="Number of parallel delete requests.")
+def dupes(gallery, delete, keep_latest, force, parallel):
+    """Find (and optionally remove) duplicate images in a gallery.
+
+    GALLERY can be a SmugMug URL (e.g. https://...com/.../n-LgKGwb) or a bare AlbumKey.
+    """
+    config = load_config()
+    session = _get_oauth_session(config)
+
+    click.echo("Resolving gallery...")
+    album_key = resolve_gallery_url(session, gallery)
+    click.echo(f"Album: {album_key}")
+
+    click.echo("Fetching images...", nl=False)
+    images = get_album_images(session, album_key)
+    click.echo(f" {len(images)} found.")
+
+    # Group by filename
+    by_name = defaultdict(list)
+    for img in images:
+        by_name[img["FileName"]].append(img)
+
+    # Find duplicates
+    identical_to_delete = []
+    different_to_delete = []
+    identical_count = 0
+    different_count = 0
+
+    reverse = keep_latest  # sort ascending by default (keep earliest), reverse to keep latest
+
+    for fname, copies in sorted(by_name.items()):
+        if len(copies) < 2:
+            continue
+
+        # Group by MD5 within same filename
+        by_md5 = defaultdict(list)
+        for img in copies:
+            by_md5[img["ArchivedMD5"]].append(img)
+
+        if len(by_md5) == 1:
+            # All copies identical
+            identical_count += 1
+            sorted_copies = sorted(copies, key=lambda x: x["DateTimeUploaded"], reverse=reverse)
+            keep = sorted_copies[0]
+            extras = sorted_copies[1:]
+            click.echo(f"\n  {fname} ({len(copies)} copies, identical)")
+            click.echo(f"    Keep:   {keep['ImageKey']}  uploaded {keep['DateTimeUploaded']}")
+            for img in extras:
+                click.echo(f"    Remove: {img['ImageKey']}  uploaded {img['DateTimeUploaded']}")
+            identical_to_delete.extend(extras)
+        else:
+            # Mixed MD5s
+            different_count += 1
+            click.echo(f"\n  {fname} ({len(copies)} copies, {len(by_md5)} distinct versions)")
+            for md5, group in by_md5.items():
+                sorted_group = sorted(group, key=lambda x: x["DateTimeUploaded"], reverse=reverse)
+                if len(group) > 1:
+                    # Identical copies within this MD5 group
+                    click.echo(f"    MD5 {md5[:8]}...:")
+                    click.echo(f"      Keep:   {sorted_group[0]['ImageKey']}  uploaded {sorted_group[0]['DateTimeUploaded']}")
+                    for img in sorted_group[1:]:
+                        click.echo(f"      Remove: {img['ImageKey']}  uploaded {img['DateTimeUploaded']}")
+                    identical_to_delete.extend(sorted_group[1:])
+                else:
+                    label = "Remove:" if force else "Skip:  "
+                    click.echo(f"    MD5 {md5[:8]}...: {label} {group[0]['ImageKey']}  uploaded {group[0]['DateTimeUploaded']}")
+                    if force:
+                        # In force mode, keep only the one from the largest MD5 group or first sorted
+                        different_to_delete.extend(group)
+
+    # In force mode, for different-content groups we kept all in different_to_delete;
+    # now remove the one we want to keep (earliest/latest overall per filename)
+    if force and different_to_delete:
+        # Re-process: group different_to_delete by filename, keep one per filename
+        force_by_name = defaultdict(list)
+        for img in different_to_delete:
+            force_by_name[img["FileName"]].append(img)
+        different_to_delete = []
+        for fname, group in force_by_name.items():
+            sorted_group = sorted(group, key=lambda x: x["DateTimeUploaded"], reverse=reverse)
+            different_to_delete.extend(sorted_group[1:])
+
+    to_delete = identical_to_delete + different_to_delete
+
+    if not identical_count and not different_count:
+        click.echo("\nNo duplicates found.")
+        return
+
+    click.echo(f"\n{identical_count + different_count} duplicate filenames found "
+               f"({identical_count} identical, {different_count} different content).")
+
+    if not delete:
+        click.echo(f"{len(to_delete)} images would be removed. Run with --delete to remove them.")
+        return
+
+    if not to_delete:
+        click.echo("Nothing to delete.")
+        return
+
+    click.confirm(f"Delete {len(to_delete)} duplicate images?", abort=True)
+
+    deleted = 0
+    errors = 0
+
+    def _do_delete(img):
+        # Each thread needs its own OAuth session (requests.Session is not thread-safe)
+        thread_session = _get_oauth_session(config)
+        delete_album_image(thread_session, album_key, img["ImageKey"])
+        return img
+
+    with ThreadPoolExecutor(max_workers=parallel) as pool:
+        futures = {pool.submit(_do_delete, img): img for img in to_delete}
+        for future in as_completed(futures):
+            img = futures[future]
+            try:
+                future.result()
+                deleted += 1
+                click.echo(f"  [{deleted + errors}/{len(to_delete)}] Deleted {img['ImageKey']} ({img['FileName']})")
+            except Exception as e:
+                errors += 1
+                click.echo(f"  [{deleted + errors}/{len(to_delete)}] FAILED {img['ImageKey']} ({img['FileName']}): {e}")
+
+    click.echo(f"\nDeleted {deleted} images ({errors} errors). {len(images) - deleted} remain.")
