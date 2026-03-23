@@ -346,6 +346,7 @@ def sort(gallery, sort_by):
 @click.option("--folder", required=True, help="Parent folder path (e.g. /Other/2026-Bahamas).")
 @click.option("--name", required=True, help="Gallery display name.")
 @click.option("--keyword", "keywords", multiple=True, required=True, help="Keyword filter (repeatable).")
+@click.option("--album", "--gallery", "source_album", default=None, help="Source album/gallery URL or AlbumKey (only match photos from this album).")
 @click.option("--date-start", default=None, help="Start date for date filter (MM/DD/YYYY).")
 @click.option("--date-stop", default=None, help="End date for date filter (MM/DD/YYYY).")
 @click.option("--privacy", type=click.Choice(["Public", "Unlisted", "Private"]), default="Unlisted",
@@ -355,7 +356,7 @@ def sort(gallery, sort_by):
 @click.option("--max-photos", type=int, default=1000, show_default=True, help="Max photos in gallery.")
 @click.option("--unlisted/--no-unlisted", default=True, show_default=True,
               help="Include unlisted galleries in smart rule search.")
-def rules(folder, name, keywords, date_start, date_stop, privacy, match, max_photos, unlisted):
+def rules(folder, name, keywords, source_album, date_start, date_stop, privacy, match, max_photos, unlisted):
     """Create or update a gallery with smart rules.
 
     Creates the gallery if it doesn't exist, then applies keyword-based smart rules.
@@ -392,6 +393,14 @@ def rules(folder, name, keywords, date_start, date_stop, privacy, match, max_pho
     album_id = get_numeric_album_id(album_key, smsess)
     click.echo(f"  Album: {album_id} / {album_key}")
 
+    # Resolve source album if specified
+    source_album_id = None
+    source_album_key = None
+    if source_album:
+        source_album_key = resolve_gallery_url(session, source_album, nickname=nickname)
+        source_album_id = get_numeric_album_id(source_album_key, smsess)
+        click.echo(f"  Source album: {source_album_key} ({source_album_id})")
+
     # Build and apply smart rules
     recipe = build_recipe(
         gallery_keywords=list(keywords),
@@ -399,6 +408,8 @@ def rules(folder, name, keywords, date_start, date_stop, privacy, match, max_pho
         nickname=nickname,
         date_start=date_start,
         date_stop=date_stop,
+        source_album_id=source_album_id,
+        source_album_key=source_album_key,
         use_unlisted=unlisted,
         match=match,
         max_photos=max_photos,

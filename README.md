@@ -177,6 +177,10 @@ Create a gallery with keyword-based smart rules, or replace the rules on an exis
 # Create gallery with a keyword filter
 uv run smugbatch rules --folder /Other/2026-Bahamas --name "White Party" --keyword "white party"
 
+# Only match photos from a specific source album
+uv run smugbatch rules --folder /Other/2026-Bahamas --name "Beach Girls" \
+    --keyword "girls" --album FSTC2c
+
 # Multiple keywords (AND — all must match)
 uv run smugbatch rules --folder /Events/2026 --name "Beach" --keyword "beach" --keyword "bahamas"
 
@@ -191,7 +195,7 @@ uv run smugbatch rules --folder /Path --name "Name" --keyword "kw" \
     --privacy Unlisted --max-photos 500 --no-unlisted
 ```
 
-Re-running with the same `--folder` and `--name` replaces the existing smart rules.
+The `--album` / `--gallery` option restricts matches to photos from a specific source album (accepts a URL or bare AlbumKey). Re-running with the same `--folder` and `--name` replaces the existing smart rules.
 
 ### Duplicates
 
