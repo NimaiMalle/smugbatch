@@ -7,9 +7,9 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .api import (create_gallery, delete_album_image, find_existing_gallery,
-                  get_album_from_node, get_album_images, patch_album,
-                  resolve_folder, resolve_gallery_url, sort_album_images,
-                  _get_oauth_session)
+                  get_album_from_node, get_album_images, parse_settings,
+                  patch_album, resolve_folder, resolve_gallery_url,
+                  sort_album_images, _get_oauth_session)
 from .auth import check_auth, run_oauth_flow
 from .config import load_config
 from .smartrules import apply_smart_rules, build_recipe, get_numeric_album_id, has_rules
@@ -356,7 +356,9 @@ def sort(gallery, sort_by):
 @click.option("--max-photos", type=int, default=1000, show_default=True, help="Max photos in gallery.")
 @click.option("--unlisted/--no-unlisted", default=True, show_default=True,
               help="Include unlisted galleries in smart rule search.")
-def rules(folder, name, keywords, source_album, date_start, date_stop, privacy, match, max_photos, unlisted):
+@click.option("--set", "settings_str", default=None,
+              help="Gallery settings as 'Name: value, Name: value'. Watermark names are resolved automatically.")
+def rules(folder, name, keywords, source_album, date_start, date_stop, privacy, match, max_photos, unlisted, settings_str):
     """Create or update a gallery with smart rules.
 
     Creates the gallery if it doesn't exist, then applies keyword-based smart rules.
@@ -392,6 +394,28 @@ def rules(folder, name, keywords, source_album, date_start, date_stop, privacy, 
     album_key = album["AlbumKey"]
     album_id = get_numeric_album_id(album_key, smsess)
     click.echo(f"  Album: {album_id} / {album_key}")
+
+    # Apply gallery settings if specified
+    if settings_str:
+        settings = parse_settings(settings_str, session=session, nickname=nickname)
+
+        # ShowCoverImage is a Node setting, not an Album setting
+        node_settings = {}
+        for key in ("ShowCoverImage",):
+            if key in settings:
+                node_settings[key] = settings.pop(key)
+
+        if settings:
+            patch_album(session, album_key, settings)
+        if node_settings:
+            node_id = album.get("NodeID") or existing["NodeId"]
+            resp = session.patch(f"https://api.smugmug.com/api/v2/node/{node_id}",
+                json=node_settings,
+                headers={"Accept": "application/json", "Content-Type": "application/json"})
+            resp.raise_for_status()
+
+        all_keys = list(settings.keys()) + list(node_settings.keys())
+        click.echo(f"  Settings applied: {', '.join(all_keys)}")
 
     # Resolve source album if specified
     source_album_id = None

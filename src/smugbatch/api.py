@@ -196,6 +196,79 @@ def delete_album_image(session: OAuth1Session, album_key: str, image_key: str) -
     resp.raise_for_status()
 
 
+def get_watermarks(session: OAuth1Session, nickname: str) -> dict[str, str]:
+    """Fetch user's watermarks. Returns {name_lower: uri} mapping."""
+    user = _api_get(session, f"/api/v2/user/{nickname}")
+    wm_uri = user["Response"]["User"]["Uris"].get("UserWatermarks", {}).get("Uri")
+    if not wm_uri:
+        return {}
+    data = _api_get(session, wm_uri)
+    return {wm["Name"].lower(): wm["Uri"] for wm in data["Response"].get("Watermark", [])}
+
+
+def parse_settings(raw: str, session: OAuth1Session = None, nickname: str = None) -> dict:
+    """Parse a 'name: value, name: value' settings string into a dict.
+
+    Handles:
+      - Spaces around : and after ,
+      - Quoted pairs for values containing commas: "Name: value, with comma"
+      - Boolean conversion (true/false)
+      - Integer conversion
+      - Watermark name resolution (Watermark: glasses full → Watermark: true + WatermarkUri)
+    """
+    settings = {}
+    pairs = []
+
+    # Split on commas, respecting quoted pairs
+    current = ""
+    in_quotes = False
+    for ch in raw:
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif ch == "," and not in_quotes:
+            pairs.append(current.strip())
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        pairs.append(current.strip())
+
+    for pair in pairs:
+        if ":" not in pair:
+            raise SystemExit(f"Invalid setting (missing ':'): {pair}")
+        name, value = pair.split(":", 1)
+        name = name.strip()
+        value = value.strip()
+
+        # Handle Watermark by name
+        if name == "Watermark" and value.lower() not in ("true", "false"):
+            if not session or not nickname:
+                raise SystemExit("Cannot resolve watermark name without an API session.")
+            watermarks = get_watermarks(session, nickname)
+            wm_uri = watermarks.get(value.lower())
+            if not wm_uri:
+                available = ", ".join(sorted(watermarks.keys()))
+                raise SystemExit(f"Watermark '{value}' not found. Available: {available}")
+            settings["Watermark"] = True
+            settings["WatermarkUri"] = wm_uri
+            continue
+
+        # Type conversion
+        if value.lower() == "true":
+            value = True
+        elif value.lower() == "false":
+            value = False
+        else:
+            try:
+                value = int(value)
+            except ValueError:
+                pass  # keep as string
+
+        settings[name] = value
+
+    return settings
+
+
 def sort_album_images(session: OAuth1Session, album_key: str,
                       move_uris: list[str], target_uri: str,
                       location: str = "After") -> None:
