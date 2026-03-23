@@ -50,7 +50,7 @@ def has_rules(album_id: int, album_key: str, smsess: str) -> bool:
 
 
 def build_recipe(gallery_keywords: list[str], common_keywords: list[str],
-                 date_start: str, date_stop: str, nickname: str,
+                 nickname: str, date_start: str = None, date_stop: str = None,
                  use_unlisted: bool = True, match: str = "All",
                  max_photos: int = 1000) -> dict:
     """Build a smart rules recipe dict."""
@@ -65,15 +65,16 @@ def build_recipe(gallery_keywords: list[str], common_keywords: list[str],
             "Operator": "AND",
         })
 
-    ingredients.append({
-        "Type": "Date",
-        "start": date_start,
-        "stop": date_stop,
-        "sort": "DateTaken",
-        "dateType": "Range",
-        "UserNickName": nickname,
-        "Operator": "AND",
-    })
+    if date_start and date_stop:
+        ingredients.append({
+            "Type": "Date",
+            "start": date_start,
+            "stop": date_stop,
+            "sort": "DateTaken",
+            "dateType": "Range",
+            "UserNickName": nickname,
+            "Operator": "AND",
+        })
 
     return {
         "useUnlisted": use_unlisted,

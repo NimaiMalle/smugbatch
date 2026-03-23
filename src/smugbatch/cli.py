@@ -340,3 +340,74 @@ def sort(gallery, sort_by):
     click.echo(" done.")
 
     click.echo(f"\nSorted! Newest day ({days[0]}) first, oldest day ({days[-1]}) last.")
+
+
+@cli.command()
+@click.option("--folder", required=True, help="Parent folder path (e.g. /Other/2026-Bahamas).")
+@click.option("--name", required=True, help="Gallery display name.")
+@click.option("--keyword", "keywords", multiple=True, required=True, help="Keyword filter (repeatable).")
+@click.option("--date-start", default=None, help="Start date for date filter (MM/DD/YYYY).")
+@click.option("--date-stop", default=None, help="End date for date filter (MM/DD/YYYY).")
+@click.option("--privacy", type=click.Choice(["Public", "Unlisted", "Private"]), default="Unlisted",
+              show_default=True, help="Gallery privacy.")
+@click.option("--match", type=click.Choice(["All", "Any"]), default="All",
+              show_default=True, help="How keywords are combined.")
+@click.option("--max-photos", type=int, default=1000, show_default=True, help="Max photos in gallery.")
+@click.option("--unlisted/--no-unlisted", default=True, show_default=True,
+              help="Include unlisted galleries in smart rule search.")
+def rules(folder, name, keywords, date_start, date_stop, privacy, match, max_photos, unlisted):
+    """Create or update a gallery with smart rules.
+
+    Creates the gallery if it doesn't exist, then applies keyword-based smart rules.
+    If the gallery already exists, its smart rules are replaced.
+    """
+    config = load_config()
+    nickname = config["user"]["nickname"]
+    smsess = config["session"]["smsess"]
+
+    if not smsess:
+        raise SystemExit("Session cookie (smsess) not set in config. Needed for smart rules.")
+
+    session = _get_oauth_session(config)
+
+    # Resolve parent folder
+    click.echo(f"Resolving folder: {folder}")
+    parent_node_uri = resolve_folder(session, nickname, folder)
+
+    # Check if gallery exists
+    url_name = name.replace(" ", "-")
+    existing = find_existing_gallery(session, parent_node_uri, url_name)
+
+    if existing:
+        click.echo(f"Gallery '{name}' exists, replacing rules...")
+        node_uri = existing["Uri"]
+    else:
+        click.echo(f"Creating gallery '{name}'...")
+        result = create_gallery(session, parent_node_uri, name, url_name, privacy)
+        node_uri = result["Response"]["Node"]["Uri"]
+        click.echo(f"  Created.")
+
+    album = get_album_from_node(session, node_uri)
+    album_key = album["AlbumKey"]
+    album_id = get_numeric_album_id(album_key, smsess)
+    click.echo(f"  Album: {album_id} / {album_key}")
+
+    # Build and apply smart rules
+    recipe = build_recipe(
+        gallery_keywords=list(keywords),
+        common_keywords=[],
+        nickname=nickname,
+        date_start=date_start,
+        date_stop=date_stop,
+        use_unlisted=unlisted,
+        match=match,
+        max_photos=max_photos,
+    )
+    apply_smart_rules(album_id, album_key, recipe, smsess)
+    click.echo(f"  Smart rules applied: {', '.join(keywords)}")
+
+    # Report result
+    from .api import _api_get
+    album_data = _api_get(session, f"/api/v2/album/{album_key}")
+    image_count = album_data["Response"]["Album"].get("ImageCount", 0)
+    click.echo(f"\nDone! Gallery has {image_count} matching images.")

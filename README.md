@@ -161,12 +161,37 @@ smugbatch auth --check    # Verify credentials
 smugbatch batch FILE      # Create galleries from batch file
 smugbatch batch FILE --limit N        # Only process first N galleries
 smugbatch batch FILE --force-settings # Re-apply settings even if unchanged
+smugbatch rules --folder PATH --name NAME --keyword KW  # Create/update gallery with smart rules
 smugbatch dupes GALLERY              # Find duplicate images (dry run)
 smugbatch dupes GALLERY --delete     # Remove duplicates (keep earliest upload)
 smugbatch sort GALLERY --by day      # Sort: newest day first, chronological within each day
 ```
 
 `GALLERY` can be a SmugMug URL (e.g. `https://example.com/Photos/Gallery` or `https://example.com/.../n-AbCdEf`) or a bare AlbumKey.
+
+### Smart Rules
+
+Create a gallery with keyword-based smart rules, or replace the rules on an existing gallery. The gallery is created automatically if it doesn't exist.
+
+```bash
+# Create gallery with a keyword filter
+uv run smugbatch rules --folder /Other/2026-Bahamas --name "White Party" --keyword "white party"
+
+# Multiple keywords (AND — all must match)
+uv run smugbatch rules --folder /Events/2026 --name "Beach" --keyword "beach" --keyword "bahamas"
+
+# Multiple keywords (OR — any can match)
+uv run smugbatch rules --folder /Events/2026 --name "Water" --keyword "pool" --keyword "beach" --match Any
+
+# With date range
+uv run smugbatch rules --folder /Events/2026 --name "Day 1" --keyword "day1" --date-start 03/15/2026 --date-stop 03/15/2026
+
+# Other options
+uv run smugbatch rules --folder /Path --name "Name" --keyword "kw" \
+    --privacy Unlisted --max-photos 500 --no-unlisted
+```
+
+Re-running with the same `--folder` and `--name` replaces the existing smart rules.
 
 ### Duplicates
 
